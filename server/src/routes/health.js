@@ -9,7 +9,7 @@ export default async function healthRoutes(app) {
       dbReady,
       rssMb: Math.round(process.memoryUsage().rss / 1048576),
       uptimeSec: Math.round(process.uptime()),
-      version: '1.1.0',
+      version: '1.2.0',
       time: new Date().toISOString(),
     };
   });

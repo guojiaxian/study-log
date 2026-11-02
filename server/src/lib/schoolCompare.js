@@ -1,7 +1,7 @@
 /**
  * 目标院校对比口径（对应开发手册 6.5）。
  * - 中考口径总分 = Σ 各计入总分科目"最近一次已录入得分"
- * - 录取线默认取近三年均值，可切换最近一年
+ * - 录取线默认取最近一年，可切换近三年均值/自定义固定值
  * - 跨口径（total_full_score ≠ 730）自动折算后再比较
  */
 import { round2 } from './metrics.js';
@@ -40,7 +40,7 @@ export function pickLineScore(rows, mode = 'avg3y') {
   };
 }
 
-/** 差距：录取线 − 我的总分（负=需提分，正=已超线） */
+/** 差距：录取线 − 我的总分（正=还需提分，负/0=已超线） */
 export function gapOf(lineScore, myTotal) {
   if (lineScore == null || myTotal == null) return null;
   return round1(lineScore - myTotal);

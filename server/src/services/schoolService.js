@@ -11,12 +11,12 @@ import { pickLineScore, gapOf, latestPerSubjectTotal, round1 } from '../lib/scho
 export const TARGET_GRADE = 9;
 
 const LINE_MODES = ['avg3y', 'latest', 'custom'];
-
-/** 归一化采用线方式：非法值回退 avg3y；custom 需要有效分数线，否则视为未设置 */
+const DEFAULT_LINE_MODE = 'latest'; // 采用线默认「最近一年」
+/** 归一化采用线方式：非法值回退默认；custom 需要有效分数线，否则视为未设置 */
 function normalizeLineMode(lineMode, customLine) {
-  const mode = LINE_MODES.includes(lineMode) ? lineMode : 'avg3y';
+  const mode = LINE_MODES.includes(lineMode) ? lineMode : DEFAULT_LINE_MODE;
   const line = customLine == null || customLine === '' ? null : Number(customLine);
-  if (mode === 'custom' && (line == null || !Number.isFinite(line) || line < 0)) return { mode: 'avg3y', customLine: null };
+  if (mode === 'custom' && (line == null || !Number.isFinite(line) || line < 0)) return { mode: DEFAULT_LINE_MODE, customLine: null };
   return { mode, customLine: line };
 }
 
@@ -28,7 +28,7 @@ function shapeSchool(row, scores = []) {
     isTarget: asBool(row.isTarget),
     sortOrder: row.sortOrder,
     remark: row.remark ?? null,
-    lineMode: row.lineMode ?? 'avg3y',
+    lineMode: row.lineMode ?? DEFAULT_LINE_MODE,
     customLine: row.customLine ?? null,
     admissionScores: scores,
     avgScore3y: pickLineScore(scores, 'avg3y').score,
@@ -68,8 +68,8 @@ export function createSchool(input = {}) {
   if (!name) throw Err.validation('院校名称为必填');
   if (db.prepare('SELECT id FROM target_school WHERE name = ?').get(name)) throw Err.conflict(`院校「${name}」已存在`);
   return (() => {
-    const info = db.prepare('INSERT INTO target_school (name, short_name, is_target, sort_order, remark) VALUES (?, ?, ?, ?, ?)')
-      .run(name, shortName, isTarget ? 1 : 0, Number(sortOrder), remark);
+    const info = db.prepare('INSERT INTO target_school (name, short_name, is_target, sort_order, remark, line_mode) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(name, shortName, isTarget ? 1 : 0, Number(sortOrder), remark, DEFAULT_LINE_MODE);
     const schoolId = Number(info.lastInsertRowid);
     for (const s of admissionScores) insertAdmission(schoolId, s);
     audit('school.create', `school:${schoolId}`);
@@ -218,7 +218,7 @@ export function compareSchools(opts = {}) {
     basis: { mode, grade: TARGET_GRADE, myTotal, totalFullScore: gradeFullScore(TARGET_GRADE), components, missingSubjects },
     schools: schoolRows,
     notes: [
-      'gap = 录取线 − 中考口径总分；负值表示还需提分，正值表示已超线',
+      'gap = 录取线 − 中考口径总分；正值表示还需提分，负值/0 表示已超线',
       '各校采用线方式独立配置（近三年均值/最近一年/自定义），见管理页「目标院校」',
       '中考口径总分只取初三学段各计分科目「最近一次已录入得分」',
       '若 missingSubjects 非空，说明存在从未录入的计入总分科目，对比结果偏低',

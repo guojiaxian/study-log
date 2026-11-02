@@ -1,14 +1,16 @@
 <script setup>
+// ===== 智能分析页：选择考试 → 调 AI 生成学情报告 → 展示/管理历史报告 =====
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../api/index.js';
 
 const loading = ref(true);
-const busy = ref(false);
+const busy = ref(false);      // 正在生成报告（AI 耗时较长，显示占位动画）
 const error = ref('');
-const exams = ref([]);
-const reports = ref([]);
-const report = ref(null);
+const exams = ref([]);        // 可选的考试列表
+const reports = ref([]);      // 历史报告列表
+const report = ref(null);     // 当前展示的报告全文
 
+// 当前选中要分析的考试 id
 const form = reactive({
   examId: null,
 });
@@ -18,10 +20,12 @@ async function loadHistory() {
   reports.value = res.list;
 }
 
+// 打开（查看）某份历史报告
 async function open(id) {
   try { report.value = await api.report(id); } catch (e) { error.value = e.message; }
 }
 
+// 首次加载：并发拉考试列表 + 报告历史；默认选中最近一次考试和最新一份报告
 onMounted(async () => {
   try {
     const [list] = await Promise.all([api.exams({ pageSize: 50 }), loadHistory()]);
@@ -31,6 +35,7 @@ onMounted(async () => {
   } catch (e) { error.value = e.message; } finally { loading.value = false; }
 });
 
+// 生成分析报告：调后端 AI 接口（耗时较长）→ 刷新历史 → 展示新报告
 async function generate() {
   error.value = '';
   if (!form.examId) { error.value = '请先选择要分析的考试'; return; }
@@ -47,7 +52,9 @@ function copyReport() {
   navigator.clipboard?.writeText(report.value.contentMd);
 }
 
-/** 轻量 Markdown 渲染（标题 / 列表 / 段落） */const blocks = computed(() => {
+/** 轻量 Markdown 渲染（标题 / 列表 / 段落） */
+// 把报告的 Markdown 文本按行拆成 { t: 类型, v: 文本 } 数组，模板据此渲染 h2/p/li
+const blocks = computed(() => {
   const md = report.value?.contentMd ?? '';
   const out = [];
   for (const raw of md.split('\n')) {

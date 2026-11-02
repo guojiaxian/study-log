@@ -1,4 +1,5 @@
 <script setup>
+// ===== 首页：最近考试概览 + 总分趋势 + 目标院校差距 + 各科概况 =====
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api/index.js';
 import LineChart from '../components/LineChart.vue';
@@ -17,6 +18,7 @@ const GRADE_OPTIONS = [
   { value: '', label: '全部' },
 ];
 
+// 拉取首页数据；silent 用于切换学段时静默刷新（不整页重渲染，避免回弹顶部）
 const load = async (opts = {}) => {
   if (!opts.silent) loading.value = true;
   error.value = '';
@@ -32,6 +34,7 @@ onMounted(load);
 
 function onGradeChange(v) { grade.value = v; load({ silent: true }); }
 
+// ---- 以下 computed 把接口数据整理成模板/图表需要的形状 ----
 const latest = computed(() => data.value?.latestExam ?? null);
 
 const trendCategories = computed(() => (data.value?.totalTrend ?? []).map((p) => p.examDate.slice(5)));
@@ -41,6 +44,7 @@ const trendSeries = computed(() => [
 
 const targets = computed(() => data.value?.targetGap?.schools ?? []);
 
+// 各科概况行：附带「vs 均值」判定（above/below/flat），供表格着色
 const subjectRows = computed(() =>
   (data.value?.subjectOverview ?? []).map((s) => ({
     ...s,

@@ -1,6 +1,6 @@
 {
   "name": "studylog",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "StudyLog 初中生学习成绩记录系统（初三 / 2027 中招）",
   "engines": {

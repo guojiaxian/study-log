@@ -1,9 +1,12 @@
 <script setup>
+// ===== 管理页：录入入口（手动 / AI 批量）+ 设置面板 =====
+// 本页只是「入口聚合」：真正功能分别在 EntryManual / EntryAi / Settings 里
 import { onMounted, ref } from 'vue';
 import { api } from '../api/index.js';
-import Settings from './Settings.vue';
+import Settings from './Settings.vue';   // 设置子组件（嵌套在本页渲染）
 
 const ai = ref({ configured: false, provider: '', model: '' });
+// 查询 AI 是否已在服务端配置（决定「智能批量录入」是否可用）
 onMounted(async () => {
   try { ai.value = await api.aiStatus(); } catch { /* ignore */ }
 });

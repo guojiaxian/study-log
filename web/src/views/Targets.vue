@@ -1,4 +1,5 @@
 <script setup>
+// ===== 目标院校对比页（仅初三）：当前总分 vs 各校录取线，含提分空间条 =====
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api/index.js';
 import { fmt, signed } from '../utils/format.js';
@@ -19,11 +20,13 @@ async function load() {
 }
 onMounted(load);
 
-const basis = computed(() => data.value?.basis ?? null);
-const schools = computed(() => data.value?.schools ?? []);
+const basis = computed(() => data.value?.basis ?? null);        // 我的总分构成
+const schools = computed(() => data.value?.schools ?? []);      // 各目标院校对比结果
 
+// 所有院校中 |差距| 的最大值，作为进度条的归一化基准（至少为 1 防除零）
 const maxAbsGap = computed(() => Math.max(1, ...schools.value.map((s) => Math.abs(s.gap ?? 0))));
 
+// 差距进度条宽度：|差距| / 全局最大差距，限制在 0~100%
 function barWidth(gap) {
   if (gap == null) return '0%';
   return `${Math.min(100, (Math.abs(gap) / maxAbsGap.value) * 100)}%`;
@@ -99,7 +102,7 @@ function barWidth(gap) {
             </tbody>
           </table>
         </div>
-        <p class="small muted">负值/红色 = 距录取线还需提分；正值/绿色 = 已超线。</p>
+        <p class="small muted">正值/红色 = 距录取线还需提分；负值/绿色 = 已超线。</p>
       </div>
 
       <div class="card">

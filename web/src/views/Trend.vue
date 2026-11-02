@@ -1,4 +1,7 @@
 <script setup>
+// ===== 趋势分析页 =====
+// 三张图 + 一个预警：总分趋势 / 单科趋势 / 排名趋势 / 连续下滑预警。
+// 总分与单科各自有独立的学段选择器（两学段满分口径不同）。
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../api/index.js';
 import LineChart from '../components/LineChart.vue';
@@ -13,6 +16,7 @@ const subjectData = ref(null);    // 单科趋势（按「单科学段」，可�
 const rankData = ref(null);
 const declaring = ref([]);
 
+// 单科趋势已勾选的科目编码集合
 const filter = reactive({ codes: [] });
 /** 总分口径与单科口径分开：总分满分两学段不同；单科满分相同的科目可跨学段混合比较。
  *  「全部」= 总分把两学段画进同一张图（参考线取卷面满分最大值）；单科 = 跨学段可比。 */
@@ -30,6 +34,7 @@ const GRADE_SUBJECT_OPTIONS = [
   { value: 'comparable', label: '全部' },
 ];
 
+// 学段显示名（'comparable'/'all' 有专门文案）
 function gradeLabelOf(v) {
   if (v === 'comparable') return '跨学段可比';
   if (v === 'all') return '全部';
@@ -79,6 +84,7 @@ function reselectCodes() {
   }
 }
 
+// 首次加载：拉科目字典 → 初始化默认勾选科目 → 加载三张图数据
 onMounted(async () => {
   try {
     const subs = await api.subjects(false);
@@ -90,6 +96,7 @@ onMounted(async () => {
   await load();
 });
 
+// 点击科目 chip：切换勾选/取消，并静默刷新单科趋势
 function toggleCode(code) {
   const i = filter.codes.indexOf(code);
   if (i >= 0) filter.codes.splice(i, 1);
@@ -103,10 +110,11 @@ function onGradeSubjectChange(v) { gradeSubject.value = v; reselectCodes(); load
 /** 当前单科口径下可选科目（由后端按学段/跨学段可比计算） */
 const availableSubjects = computed(() => subjectData.value?.subjects ?? []);
 
+// ---- 下面一组 computed 把接口数据整理成 LineChart 需要的 categories/series ----
 const subjectCats = computed(() => (subjectData.value?.points ?? []).map((p) => p.examDate.slice(5)));
 const subjectSeries = computed(() =>
   (subjectData.value?.series ?? [])
-    .filter((s) => s.key !== 'total')
+    .filter((s) => s.key !== 'total')   // 单科图不画总分线
     .map((s) => ({
       name: s.name,
       data: (subjectData.value.points ?? []).map((p) => p.values[s.key]),
@@ -118,6 +126,7 @@ const totalCats = computed(() => (totalData.value?.points ?? []).map((p) => p.ex
 const totalSeries = computed(() => [{ name: '总分', data: (totalData.value?.points ?? []).map((p) => p.values.total) }]);
 const totalFullScore = computed(() => totalData.value?.series?.[0]?.fullScore ?? 0);
 
+// 排名趋势：双 Y 轴（班级/年级），inverse 反转让名次小的画在上方
 const rankCats = computed(() => (rankData.value?.points ?? []).map((p) => p.examDate.slice(5)));
 const rankSeries = computed(() => [
   { name: '班级排名', data: (rankData.value?.points ?? []).map((p) => p.classRank), axis: 0 },

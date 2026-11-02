@@ -1,4 +1,5 @@
 <script setup>
+// ===== 历史成绩总览：考试 × 科目的成绩矩阵（分页表格） =====
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../api/index.js';
 import GradeChips from '../components/GradeChips.vue';
@@ -6,8 +7,9 @@ import { fmt } from '../utils/format.js';
 
 const loading = ref(true);
 const error = ref('');
-const matrix = ref(null);
+const matrix = ref(null);         // 后端返回的矩阵：columns(科目列) + rows(考试行)
 const examTypes = ref([]);
+// 筛选条件：类型 / 学段 / 分页；切换筛选后都从第 1 页重新查
 const filter = reactive({ type: '', grade: '', page: 1, pageSize: 20 });
 
 const GRADE_OPTIONS = [
@@ -19,6 +21,7 @@ const GRADE_OPTIONS = [
 function onGradeChange(v) { filter.grade = v; filter.page = 1; load({ silent: true }); }
 
 async function load(opts = {}) {
+  // silent：切筛选时静默刷新，不整页重渲染（避免页面回弹顶部）
   if (!opts.silent) loading.value = true;
   error.value = '';
   try {
@@ -31,6 +34,7 @@ async function load(opts = {}) {
   } catch (e) { error.value = e.message; } finally { loading.value = false; }
 }
 
+// 首次加载：拉考试类型字典（排除体育/实验操作这类特殊类型），再查矩阵
 onMounted(async () => {
   try { examTypes.value = (await api.examTypes()).list.filter((t) => !['sport', 'lab'].includes(t.code)); } catch { /* ignore */ }
   await load();
@@ -38,6 +42,7 @@ onMounted(async () => {
 
 const totalPages = computed(() => Math.max(1, Math.ceil((matrix.value?.total ?? 0) / filter.pageSize)));
 
+// 单元格显示文本：缺考 / 等级 / 分数 三种形态
 const cellText = (cell, col) => {
   if (!cell || !cell.entered) return '';
   if (cell.isAbsent) return '缺考';
@@ -92,6 +97,7 @@ const cellText = (cell, col) => {
               </tr>
             </thead>
             <tbody>
+              <!-- 点击整行跳到该考试的详情页 -->
               <tr v-for="r in matrix.rows" :key="r.examId" style="cursor: pointer" @click="$router.push(`/exams/${r.examId}`)">
                 <td class="l sticky-col col-date">{{ r.examDate.slice(5) }}</td>
                 <td class="l col-name">{{ r.name }}</td>

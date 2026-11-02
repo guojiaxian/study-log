@@ -1,4 +1,6 @@
 <script setup>
+// ===== AI 批量录入页（两步流程） =====
+// 第 1 步：粘贴成绩单文本 → 后端 AI 解析；第 2 步：人工校对匹配结果 → 确认入库
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api/index.js';
@@ -7,7 +9,7 @@ import { fmt } from '../utils/format.js';
 
 const router = useRouter();
 
-const step = ref(1);
+const step = ref(1);          // 当前向导步骤：1 粘贴文本 / 2 校对入库
 const loading = ref(false);
 const error = ref('');
 const subjects = ref([]);
@@ -19,11 +21,12 @@ const GRADE_OPTIONS = [
   { value: 9, label: '初三' },
 ];
 const gradeLabel = computed(() => (Number(grade.value) === 8 ? '初二' : '初三'));
-const taskId = ref(null);
+const taskId = ref(null);        // AI 解析任务 id，入库时要回传给后端
 const model = ref('');
 const durationMs = ref(0);
 const warnings = ref([]);
-const items = ref([]);
+const items = ref([]);           // AI 解析出的成绩行（可编辑/勾选是否入库）
+// 科目 id → 科目对象 的查找表，避免在循环里反复 find
 const subjectsById = computed(() => new Map(subjects.value.map((s) => [s.id, s])));
 
 const form = reactive({
@@ -60,8 +63,10 @@ onMounted(async () => {
   } catch (e) { error.value = e.message; }
 });
 
+// 需要「人工确认」的行数（AI 没能精确匹配到系统科目的行）
 const needConfirm = computed(() => items.value.filter((i) => i.matchType !== 'exact').length);
 
+// 第 1 步：把文本交给后端 AI 解析，结果回填到校对表格，进入第 2 步
 async function parse() {
   error.value = '';
   if (!form.rawText.trim()) { error.value = '请先粘贴成绩单文本'; return; }
@@ -79,6 +84,7 @@ async function parse() {
     durationMs.value = res.durationMs;
     warnings.value = res.warnings ?? [];
     items.value = (res.items ?? []).map((i) => ({ ...i, include: i.matchType !== 'unmatched' }));
+    // 回填 AI 识别出的考试信息（名称/日期/类型/学段/排名），学段变了要重拉科目
     if (res.exam?.name) form.examName = res.exam.name;
     if (res.exam?.examDate) form.examDate = res.exam.examDate;
     if (res.exam?.examType) form.examType = res.exam.examType;
@@ -98,10 +104,12 @@ async function parse() {
   }
 }
 
+// 校对表格：手动补一行
 function addRow() {
   items.value.push({ rawSubject: '', subjectId: null, subjectName: '', matchType: 'unmatched', score: null, gradeLevel: null, fullScore: null, include: true });
 }
 
+// 校对表格：改选系统科目后，同步科目名/满分；等级制科目清掉分数改用等级
 function onSubjectChange(row) {
   const s = subjectsById.value.get(row.subjectId);
   row.subjectName = s?.name ?? '';
@@ -109,6 +117,7 @@ function onSubjectChange(row) {
   if (s && s.scoreMode === 'grade') { row.score = null; row.matchType = 'exact'; }
 }
 
+// 只收集「勾选入库 且 已匹配科目 且 有值」的行，转换成后端格式
 const payloadScores = computed(() =>
   items.value
     .filter((r) => r.include && r.subjectId)
@@ -120,6 +129,7 @@ const payloadScores = computed(() =>
     .filter((r) => r.gradeLevel || r.score != null),
 );
 
+// 第 2 步：确认入库（回传 taskId 供后端关联解析结果），成功后跳考试详情
 async function commit() {
   error.value = '';
   if (!form.examName.trim()) { error.value = '请填写考试名称'; return; }

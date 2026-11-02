@@ -1,4 +1,5 @@
 <script setup>
+// ===== 单次考试详情页：总分/排名概览 + 与上次对比 + 与历史均值对比 + 各科明细 =====
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api/index.js';
@@ -6,17 +7,18 @@ import { fmt, signed, trendArrow, trendClass, rankArrow, rankClass, rankText, ex
 
 const route = useRoute();
 const router = useRouter();
-const id = Number(route.params.id);
+const id = Number(route.params.id);   // 从 URL /exams/:id 中取考试 id
 
 const loading = ref(true);
 const error = ref('');
-const exam = ref(null);
-const cmp = ref(null);
-const busy = ref(false);
+const exam = ref(null);   // 考试本体数据
+const cmp = ref(null);    // 对比数据（vs 上次 / vs 历史均值）
+const busy = ref(false);  // 生成报告/删除操作进行中
 
 async function load() {
   loading.value = true;
   try {
+    // Promise.all 并发拉两个接口，等全部返回
     const [e, c] = await Promise.all([api.exam(id), api.compare(id)]);
     exam.value = e;
     cmp.value = c;
@@ -24,6 +26,7 @@ async function load() {
 }
 onMounted(load);
 
+// 各科明细行：把对比数据按科目 id 合并进考试成绩，方便模板同一行展示
 const scoreRows = computed(() =>
   (exam.value?.scores ?? []).map((s) => ({
     ...s,
@@ -32,6 +35,7 @@ const scoreRows = computed(() =>
   })),
 );
 
+// 生成学情分析报告，完成后跳到智能分析页查看
 async function generate() {
   busy.value = true;
   try {
@@ -40,6 +44,7 @@ async function generate() {
   } catch (e) { error.value = e.message; } finally { busy.value = false; }
 }
 
+// 删除考试：先弹原生 confirm 二次确认，成功后回考试总览
 async function remove() {
   if (!window.confirm('删除本次考试及其全部成绩？此操作不可撤销。')) return;
   busy.value = true;

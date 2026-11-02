@@ -1,7 +1,12 @@
+// ===== 后端接口统一封装 =====
+// 页面组件不直接写 URL，统一从底部 api 对象调用（api.exams()、api.createExam(...) 等）
 import axios from 'axios';
 
+// 创建 axios 实例：所有请求自动带上 /api/v1 前缀，60 秒超时
 const http = axios.create({ baseURL: '/api/v1', timeout: 60000 });
 
+// 响应拦截器：统一处理后端「{ code, message, data }」包装格式 ——
+// code 非 0 转为抛错（页面 catch 即可拿到 message）；成功时直接剥壳返回 data
 http.interceptors.response.use(
   (res) => {
     const body = res.data;
