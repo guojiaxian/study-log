@@ -126,7 +126,7 @@ npm start              # 启动服务（等价于 node server/src/server.js）
 
 默认拓扑：公网 → Node.js（Fastify，systemd 守护），同一进程既提供 `/api/v1/*` 接口，也托管 `web/dist` 静态页，不引入 Nginx。
 
-默认部署目录为 `/root/studylog`，服务以 root 运行（单元文件未指定 `User=`）。改用其它目录时只需同步修改 `deploy/studylog.service` 的 `WorkingDirectory` / `EnvironmentFile` 与 `deploy/deploy.sh` 的 `APP_DIR`。
+默认部署目录为 `/root/studylog`（可任意），服务以 root 运行（单元文件未指定 `User=`）。**更换目录只需两步**：把整个目录搬走，再在新目录执行 `deploy/install-service.sh` 刷新单元（模板会按新路径重新渲染）——脚本本身无需修改，它们都按自身位置推导项目根。`deploy/deploy.sh` 会校验单元的 `WorkingDirectory` 与实际部署目录是否一致，不一致直接拒绝执行。
 
 ```bash
 # 服务器一次性初始化（以下命令均以 root 执行）

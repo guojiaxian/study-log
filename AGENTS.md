@@ -163,6 +163,41 @@ curl -s localhost:3000/api/v1/health                                # 期望 ver
 - 迁移：`schema_version` 已登记则跳过。若生产仍 < 4，首次启动会跑 `004_subject_by_grade.sql`（纯增量：建表 + `INSERT OR IGNORE` + 重建视图，不动考试数据），`migrate.js` 会自动留 `.bak.004` 快照。
 - **绝不**在生产跑 `npm run seed:real` / `seed:demo`（会 `DELETE` 考试与成绩）。
 
+### 7.2 更换项目目录（搬家）—— 安全流程
+
+前提：**所有脚本按自身位置推导项目根**（`BASH_SOURCE`），搬家不需要改任何脚本；唯一由仓库外维护的引用是 `/etc/systemd/system/studylog.service`。
+
+```bash
+# 0) 备份（必须先停服，WAL 才是一致状态）
+systemctl stop studylog
+cp -a /root/studylog/data /root/studylog-data.bak.$(date +%Y%m%d)
+ls -l /root/studylog/data/studylog.db*        # 确认 -wal/-shm 一起在
+
+# 1) 搬家（同分区 mv 是原子改名；跨分区会变成复制，先看空间）
+df -h /root /opt
+mv /root/studylog /root/applications/studylog
+
+# 2) 刷新 systemd 单元（★ 必做，见下方说明）
+cd /root/applications/studylog
+deploy/install-service.sh
+systemctl cat studylog | grep -E 'WorkingDirectory|StandardOutput'
+
+# 3) 启动并验证
+scripts/start.sh
+curl -s localhost:3000/api/v1/health          # 期望 status ok + version 1.2.0
+systemctl is-enabled studylog                 # enabled
+
+# 4) 收尾：确认无残留引用
+grep -r "/root/studylog" /etc/systemd/system/ /etc/cron* 2>/dev/null
+ls -d /root/studylog 2>/dev/null              # 旧目录还在则确认无用后删除
+```
+
+- **第 2 步不能省**：旧单元里有 `EnvironmentFile=/root/studylog/.env`（无 `-` 前缀）。目录搬走后该文件不存在，systemd 会以 `Failed to load environment files` **直接拒绝启动**；`StandardOutput=append:/root/studylog/logs/app.log` 也会在旧位置重建目录。
+- **必须同步更新的外部文档**：根目录 `新服务环境准备要求.md`（发给外部开发者的约束文档，写明 `/root/studylog` 不可动）——搬家后要改，否则约束失效。
+- **回滚**：`systemctl stop studylog` → `mv` 回原路径 → 在旧路径执行 `deploy/install-service.sh` → `scripts/start.sh`。
+- **不要做**：服务运行时 `mv`（进程 cwd 变 deleted）；手工改 `/etc/systemd/system/*.service`（会被 `install-service.sh` 覆盖，且易漏改）；把新目录放进旧目录内部。
+- **保险**：`deploy/deploy.sh` 会比对单元的 `WorkingDirectory` 与实际部署目录，不一致直接拒绝执行；`APP_DIR` 已改为按脚本位置推导，无需再改脚本。
+
 ## 8. Agent 行为红线（历次会话确立的约束）
 
 1. 在 `/root/applications/study-log-wxmp`（小程序，已移出本仓库）上工作时：**只读**对待 Web 版——不改、不删、不停服务、不占端口、不产生数据/环境冲突。
