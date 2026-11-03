@@ -27,6 +27,28 @@ HEALTH_URL="http://$HEALTH_HOST:$PORT/api/v1/health"
 health_ok() { curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; }
 health_body() { curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null; }
 
+# 轮询健康检查，最多等 N 秒（默认 20）；成功返回 0
+wait_health() {
+  local i n="${1:-20}"
+  for i in $(seq 1 $((n * 2))); do
+    sleep 0.5
+    health_ok && return 0
+  done
+  return 1
+}
+
+# 健康检查通过后打印一行摘要（失败时提示排查）
+report_health() {
+  local body
+  if body="$(health_body)" && [ -n "$body" ]; then
+    echo "健康检查：$body"
+    echo "访问地址：http://$HEALTH_HOST:$PORT/"
+  else
+    echo "警告：$HEALTH_URL 无响应，请用 deploy/log.sh 排查" >&2
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------- 模式探测
 
 unit_exists() {  # systemd 单元是否安装（无论启用与否）
@@ -51,9 +73,14 @@ pid_alive() {   # 进程存在且命令行含本项目入口
 }
 
 # 兜底识别：命令行含入口文件 且 进程工作目录 = 项目根（不会误杀其它项目）
+# 排除 systemd 的 MainPID —— 单元管理的进程不算"残留"，否则会误报冲突
 stray_pids() {
-  local pid cwd
+  local pid cwd main=""
+  if unit_exists; then
+    main="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null || true)"
+  fi
   for pid in $(pgrep -f "${ENTRY//\//\\/}" 2>/dev/null); do
+    [ -n "$main" ] && [ "$pid" = "$main" ] && continue
     cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)" || continue
     [ "$cwd" = "$ROOT" ] && printf '%s\n' "$pid"
   done

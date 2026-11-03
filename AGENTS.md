@@ -2,9 +2,34 @@
 
 > **读者**：在本仓库工作的 AI Agent。人类请读 [README.md](README.md)、[docs/01-产品设计手册.md](docs/01-产品设计手册.md)、[docs/02-开发手册.md](docs/02-开发手册.md)。
 > **维护纪律**：任何 Agent 修改了业务口径、目录结构或验证方式后，必须同步更新本文件对应小节。
-> **最后更新**：2026-11-02（v1.2.0 发布准备会话写入：版本号、口径对齐、小程序移出仓库）。
+> **最后更新**：2026-11-03（运维形态改为强制 systemd 托管 + scripts/ 手动控制入口）。
 
 ---
+
+## 0. 5 分钟上手（新 Agent 的第一件事）
+
+```bash
+# 1) 服务是否活着（期望 status:"ok"、version:"1.2.0"）
+curl -s http://127.0.0.1:3000/api/v1/health
+bash deploy/status.sh                    # 单元状态 + 开机自启 + 健康检查
+
+# 2) 改代码前先跑基线测试
+npm test                                 # Web：14 项（server/test/lib.test.js）
+node /root/applications/study-log-wxmp/tools/test.js    # 小程序：98 项（若涉及）
+
+# 3) 改完必须重建再重启（前端改动不 --build 不会生效）
+scripts/restart.sh --build
+```
+
+**最容易犯的三个错**
+
+1. **把 730 写死** —— 满分必须 `gradeFullScore(grade)` 推导（初三 730 / 初二 570），见第 4 节。
+2. **在页面里自建统计口径** —— 派生指标只许在 `server/src/lib/metrics.js`（及小程序同名文件）实现。
+3. **改了前端只重启不构建** —— Fastify 托管的是 `web/dist`，不 `--build` 看不到变化。
+
+**读代码顺序**：`server/src/server.js` → `app.js` → `routes/*.js` → `services/*.js` → `lib/metrics.js`；前端从 `web/src/views/` 逐页对照 docs/01 第 6 章原型走。
+
+**改动前必读**：第 4 节（业务口径，改统计/展示前）、第 8 节（红线）。
 
 ## 1. 仓库是什么（一句话）
 
@@ -32,7 +57,8 @@ server/src/lib/subjectMatch.js   科目名匹配（exact→alias→fuzzy→unmat
 server/src/lib/ruleAnalysis.js   规则兜底报告
 server/src/services/*.js      subject(按学段)/exam/stats/school/ai/analysis/config/examType/data
 web/src/views/*.vue           Dashboard/Trend/ExamList/ExamDetail/Analysis/Targets/Manage/EntryManual/EntryAi
-deploy/*.sh                   start/stop/restart/status/log（systemd 与 nohup 双模式自适应）
+scripts/*.sh                  日常手动控制：start(enable+start)/restart(--build)/stop(stop+disable=永久关闭)
+deploy/*.sh                   install-service(渲染单元)/status/log/deploy(发版)；start/stop/restart 为转发壳
 docs/01-产品设计手册.md        产品口径与原型（第 2.2 科目分值表、6.4 派生指标定义是准绳）
 docs/02-开发手册.md            DDL、接口报文、AI 契约（第 4/5/6 章为冻结基线）
 
@@ -53,8 +79,9 @@ docs/02-开发手册.md            DDL、接口报文、AI 契约（第 4/5/6 �
 
 ```bash
 # ---- Web 版 ----
-curl -s http://127.0.0.1:3000/api/v1/health     # 健康检查：{status:"ok", dbReady:true, ...}
-bash deploy/status.sh                           # 运行状态（systemd 或 nohup 自适应）
+curl -s http://127.0.0.1:3000/api/v1/health     # 健康检查：{status:"ok", dbReady:true, version:"1.2.0"}
+bash deploy/status.sh                           # 单元状态 + 开机自启状态 + 健康检查
+systemctl is-enabled studylog                   # 应为 enabled（scripts/stop.sh 后变 disabled）
 npm test                                        # Vitest 单元测试（server/test/lib.test.js）
 
 # ---- 小程序版（目录已移出本仓库，用绝对路径）----
@@ -67,7 +94,8 @@ find /root/applications/study-log-wxmp -name "*.js" | xargs -I{} node --check {}
 # JSON 可解析 + app.json 每个页面四件套（js/json/wxml/wxss）齐全
 ```
 
-**改 Web 前端后必须 `bash deploy/restart.sh --build`（先构建再重启）；只改服务端 `restart.sh` 即可。**
+**改 Web 前端后必须 `scripts/restart.sh --build`（先构建再重启）；只改服务端 `scripts/restart.sh` 即可。**
+服务由 systemd 托管：开机自启 + `Restart=always` 崩溃自愈；**不要再用 nohup 手动起进程**（见第 9 节）。
 小程序改完无需构建，开发者工具重新编译即可。
 
 ## 4. 业务口径（改任何统计/展示代码前必读）
@@ -109,14 +137,31 @@ find /root/applications/study-log-wxmp -name "*.js" | xargs -I{} node --check {}
 | --- | --- | --- |
 | 配置 | 32 核 Hygon / 30GB 内存 / 957G 盘，Linux ky10 | **2 核 / 2GB / 40GB**（资源紧张，容量预算以此为准） |
 | Node | v22.19.0 系统级安装（勿用 nvm；`node:sqlite` 要求 ≥22.5） | 系统级 Node 22.x（systemd 单元写死 `/usr/bin/node`，禁止升级/降级/覆盖） |
-| studylog 运行形态 | **nohup 模式**：`node server/src/server.js`（PID 文件 `data/studylog.pid`），由 `deploy/*.sh` 管理；**不得停止/重启/杀** | systemd 单元 `studylog.service`：`/root/studylog`，端口 3000，`MemoryMax=450M` |
+| studylog 运行形态 | **systemd 单元 `studylog.service`**（2026-11-03 起）：`/root/applications/study-log`，node `/usr/local/bin/node`，开机自启 + `Restart=always`；启停走 `scripts/start.sh` / `stop.sh`（**stop = 永久关闭**：stop+disable） | 同一套单元（模板由 `deploy/install-service.sh` 按路径渲染）：`/root/studylog`，node `/usr/bin/node`，端口 3000，`MemoryMax=450M` |
 | 其它 | 机器上还有 nginx(80)、docker、adb(5037) 等无关服务，同样不许动 | 默认无 Nginx、无数据库进程；对外端口靠阿里云安全组 |
 
 - 开发机 `data/studylog.db`（WAL）+ `*.bak.NNN` + PID 文件：**生产数据，禁止删除/移动**；从备份恢复必须同时删 `-wal/-shm`。
 - `.env` 含 `AI_API_KEY`：可读但**不得把值打印/外传**。
-- git：分支 `main`，远端 `git@github.com:guojiaxian/Study-log.git`，用户 guojiaxian。历史上约 28 项用户未提交改动（web/src/views 全部、server 部分、README、deploy 脚本等）已于 **2026-11-02 随 v1.2.0 提交入库**；此后保持工作区干净，勿再积压未提交改动。
+- git：分支 `main`，远端 `git@github.com:guojiaxian/study-log.git`（**2026-11-03 由 `Study-log` 改名，旧地址仍可重定向但会打印 moved 警告，生产机建议 `git remote set-url` 更新**），用户 guojiaxian。历史上约 28 项用户未提交改动已于 **2026-11-02 随 v1.2.0 提交入库**；此后保持工作区干净，勿再积压未提交改动。
 - 小程序已于 2026-11-02 由用户移出本仓库（现位于 `/root/applications/study-log-wxmp`），**用户明确要求小程序不上传 git**——本仓库内不应再出现 `study-log-wxmp/` 目录；若未来移回，仍不得 `git add` 或推送。
 - **同机部署第二个 Web 服务的环境要求**见根目录 [`新服务环境准备要求.md`](新服务环境准备要求.md)（2026-11-01 交付外部开发者的硬约束文档：2GB 内存预算、禁常驻 DB、端口 3100–3299 段、隔离与回归清单）。
+
+### 7.1 生产机（`/root/studylog`）部署要点
+
+```bash
+cd /root/studylog
+git remote set-url origin git@github.com:guojiaxian/study-log.git   # 仓库已改名，建议更新
+systemctl stop studylog && cp data/studylog.db data/studylog.db.bak.$(date +%Y%m%d)
+bash deploy/deploy.sh                                               # 拉码→装依赖→构建→重启→健康检查
+curl -s localhost:3000/api/v1/health                                # 期望 version:"1.2.0"
+```
+
+- **拉代码不会改 systemd 单元**：`/etc/systemd/system/studylog.service` 在仓库外，`git pull` 不动它。生产已有的旧单元（`WorkingDirectory=/root/studylog`、`ExecStart=/usr/bin/node`、`EnvironmentFile=.env`、日志 `logs/stdout.log`）继续正常工作。
+- **只有显式执行 `deploy/install-service.sh` 才会刷新单元**，届时变化：日志 `logs/stdout.log` → `logs/app.log`；去掉 `EnvironmentFile`（改由 `loadEnv()` 读 cwd 下的 `.env`）；`ExecStart` 的 node 换成 `command -v node` 的结果。**执行前先确认生产 `command -v node` 就是 `/usr/bin/node`**（生产禁止升级/覆盖系统 node）。
+- `scripts/start.sh` 在单元已存在时**不会**改写它，只做 `enable` + `start` —— 生产沿用旧单元属预期行为。
+- `deploy/deploy.sh` 含 `git clean -fd`：会删除生产目录的未跟踪文件。`.env` / `data/` / `logs/` 均已 gitignore（安全），但不要在 `/root/studylog` 放手工脚本。
+- 迁移：`schema_version` 已登记则跳过。若生产仍 < 4，首次启动会跑 `004_subject_by_grade.sql`（纯增量：建表 + `INSERT OR IGNORE` + 重建视图，不动考试数据），`migrate.js` 会自动留 `.bak.004` 快照。
+- **绝不**在生产跑 `npm run seed:real` / `seed:demo`（会 `DELETE` 考试与成绩）。
 
 ## 8. Agent 行为红线（历次会话确立的约束）
 
@@ -137,6 +182,10 @@ find /root/applications/study-log-wxmp -name "*.js" | xargs -I{} node --check {}
 | 迁移漏登记版本号 | 003 曾漏 `schema_version` 导致每次启动重放报 duplicate column；见第 5 节约定 |
 | 推理模型 token 截断 | 见第 6 节；用户侧表现为"AI 未返回有效内容/输出被截断"，解法是调大 `AI_MAX_TOKENS_*`（小程序在 AI 设置页调） |
 | WAL 恢复不彻底 | 只 cp `.db` 不删 `-wal/-shm` 会回放旧写入，"恢复无效"；见第 7 节 |
+| **nohup 起的服务会被上层会话清理杀掉** | 2026-11-03 08:59：ZCode 服务端自我更新重启（`journald: server-supervisor stopped` 08:59:28.491），10ms 后 StudyLog 收到 SIGTERM 优雅退出（`logs/app.log` 末行「收到 SIGTERM」）。原因：nohup 起的进程仍属启动它的会话进程树，**nohup 只挡 SIGHUP 不挡 SIGTERM**，且无 systemd 单元 → 无人拉起。**根治：全部走 systemd 托管**（`Restart=always` 已用 `kill -9` 实测可自愈），不要再用 nohup 起服务 |
+| **systemd 单元是仓库外的产物** | `/etc/systemd/system/studylog.service` 不由 `git pull` 更新，也不由 `scripts/start.sh` 重写。仓库里只有模板 `deploy/studylog.service`（`@ROOT@`/`@NODE@` 占位符），刷新必须显式跑 `deploy/install-service.sh`。改模板后忘了刷新 = 线上行为不变（不是 bug，是设计） |
+| systemd 243 读不到日志路径 | `systemctl show -p StandardOutput --value` 只返回 `append`，拿不到路径。`deploy/log.sh` 改为 `systemctl cat` 后用 `sed 's/^StandardOutput=append://p'` 解析，新旧单元模板都能正确取到（新 → `logs/app.log`，旧 → `logs/stdout.log`） |
+| `stray_pids` 误判正常进程 | 按「命令行含入口 + cwd=项目根」扫描会把 systemd 正常托管的 MainPID 也当成残留；已用 `systemctl show -p MainPID --value` 排除，否则 `scripts/start.sh` 会误报端口冲突 |
 | `findExamsForStats` 忽略 includeDraft | 参数存在于签名但实现硬编码只取 confirmed；矩阵状态筛选暴露后已修。新增带状态语义的统计查询时先验证该参数 |
 | 文档与实现的两处偏差 | ① gap 正负号、② 采用线默认 latest——曾长期文档写反/不一致，**2026-11-02 已全面对齐**（docs/01 FR-7.2/C-11、docs/02 5.3 示例与 6.5、`gapOf` JSDoc、`/schools/compare` notes、目标页图例统一为「正值=还需提分」「默认 latest」）。若再改口径需双端同步并更新本文件 |
 
@@ -146,4 +195,6 @@ find /root/applications/study-log-wxmp -name "*.js" | xargs -I{} node --check {}
 - **2026-11-01**：补齐小程序与 Web 版的功能差距（98 项断言全过）：趋势页/总览页日期范围筛选、关键词搜索、状态（草稿/确认）筛选与草稿标签、总览按总分排序、录入页单科排名+单科备注（服务层补正整数校验）、批量录入页解析历史回看（listParseTasks/getParseTask）、分析页导出 .md（shareFileMessage 降级复制）与 24h 指纹缓存（FNV-1a，原项目 SHA-256 的轻量替代）、line-chart 图例点选隐藏系列、CSV 导出跟随学段/日期筛选、dashboard 首次双刷新修复。过程中修复 findExamsForStats 忽略 includeDraft 的缺陷（见第 9 节）。
 - **2026-11-01（晚）**：开发机仓库由 `/root/study-log` 整体迁移至 **`/root/applications/study-log`**（与 cloud-monitor 的目录规划一致）。流程：`deploy/stop.sh` 停服（WAL 安全）→ `mv` 同分区迁移 → `deploy/start.sh` 重启并回归验证（health ok、真实数据完好、小程序 98 项测试通过、git/status 脚本正常）。deploy 脚本按脚本自身位置推断根目录，**零代码修改**；全仓无写死旧路径。ZCode 任务会话索引已同步：`~/.zcode/v2/tasks-index.sqlite`（tasks/project_roots/workspace_alias/session_creation_commands 共 6 行）与 `~/.zcode/v2/setting.json` 的路径由旧改新，旧路径打开项目的历史会话（含本会话）保留；备份在 `~/.zcode/backup/manual-20261101-migrate/`。
 - **2026-11-02**：v1.2.0 发布准备并推送 git。①核实工作区既有未提交改动（前端全面注释化、deploy 双模式脚本重组、采用线默认 latest）后全部入库；②修正 gap 正负号 4 处错误文案（`schoolCompare.gapOf` JSDoc、`/schools/compare` notes、目标页图例、docs/02 5.3 示例的 gap 符号），docs/01/02 采用线默认值同步为 latest，docs/02 新增 v1.2.0 修订条目；③版本号 1.1.0→1.2.0（`package.json`、`server/package.json`、`health.js`）；④小程序目录由用户移出本仓库至 `/root/applications/study-log-wxmp`，本文件路径/红线相应更新；⑤`npm test` 全绿后提交并推送 origin/main。本地 nohup 服务未重启（红线），health 的 `version` 字段与目标页图例修正将在下次 `restart.sh --build`/生产部署后生效。
+- **2026-11-03**：服务停服排查与运维形态改造。①定位停服根因：11-03 08:59:28 收到 SIGTERM——进程是 11-01 由 AI 会话的 bash 工具用 `nohup` 起的，仍属该会话进程树；ZCode 服务端更新重启清理进程树时整组收到 SIGTERM，而机器上**从未安装过 systemd 单元**（`/etc/systemd/system` 等三处均无），故无人拉起（history 里的 `systemctl stop studylog` 无单元，不是元凶）。②新增 `scripts/start.sh|restart.sh|stop.sh`：统一 systemd 语义，**stop = 永久关闭（stop+disable，重启机器也不自启）**，start/restart 会 `enable` 恢复自启；已实测 stop→ inactive+disabled、start→ active+enabled、`kill -9` → 3s 内自动重生。③`deploy/studylog.service` 改为 `@ROOT@`/`@NODE@` 占位符模板（原文件写死旧路径 `/root/studylog`，在本机装会起不来），新增 `deploy/install-service.sh` 按本机路径渲染安装；本机已安装到 `/etc/systemd/system/studylog.service` 并 enable。④`deploy/start.sh|stop.sh|restart.sh` 降级为转发壳；`deploy/status.sh` 增加开机自启状态与健康检查。⑤`deploy/service.sh` 的 `stray_pids()` 排除 systemd MainPID（否则正常托管进程会被误判为残留）。⑥前端已按 v1.2.0 重新构建并重启，`/api/v1/health` 返回 `version:1.2.0`；数据完好（exam 3 / score 21 / report 1 / school 3，schema_version 4）。⑦README、docs/02 7.5、本文件同步更新。
+- **2026-11-03（后半）**：①新增第 0 节「5 分钟上手」与 7.1「生产机部署要点」，补齐跨机器交接所需的事实（单元在仓库外、install-service 的副作用、`git clean -fd` 风险、迁移 004 增量性）；②`deploy/log.sh` 改为从已安装单元解析日志路径（见第 9 节），同时兼容生产的旧单元 `logs/stdout.log`；③远端仓库名 `Study-log` → `study-log`，本地 remote 已更新；④全部改动提交推送 origin/main。
 - 更早历史见 `git log`（ff7dab9 debug → e9fb243 增加脚本 → 65e0230/549ecf7/5f00400 界面与导航迭代）与 docs/02 修订记录（v1.0→v1.2 学段维度改版）。

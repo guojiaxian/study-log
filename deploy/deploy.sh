@@ -4,11 +4,9 @@
 # 流程：拉取代码 → 安装依赖 → 构建前端 → 重启 systemd → 健康检查
 #
 # 服务器一次性准备（只需做一次，root 身份）：
-#   git clone git@github.com:guojiaxian/Study-log.git /root/studylog
+#   git clone git@github.com:guojiaxian/study-log.git /root/studylog
 #   cd /root/studylog && cp .env.example .env   # 填入 AI_API_KEY，并 chmod 600 .env
-#   mkdir -p /root/studylog/logs
-#   cp /root/studylog/deploy/studylog.service /etc/systemd/system/studylog.service
-#   systemctl daemon-reload && systemctl enable --now studylog
+#   scripts/start.sh    # 自动渲染并安装 systemd 单元（deploy/install-service.sh）→ enable → start
 #
 # 之后每次发版：在服务器上执行  bash deploy/deploy.sh
 #

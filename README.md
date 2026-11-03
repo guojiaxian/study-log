@@ -22,7 +22,7 @@
 - **数据库**：SQLite + WAL，驱动为 Node 内置 `node:sqlite`（免原生编译、无额外系统依赖）
 - **前端**：Vue 3 + Vite 5 + Vue Router + Pinia + ECharts（按需引入），原生 CSS
 - **大模型**：OpenAI 兼容协议，默认 DeepSeek；密钥仅存于服务端 `.env`，不下发前端
-- **进程守护**：systemd（生产）；开发机用 deploy/ 下脚本以 nohup 常驻
+- **进程守护**：systemd（开机自启 + 崩溃自愈）
 
 ## 目录结构
 
@@ -42,15 +42,18 @@ studylog/
 ├── data/                 # 运行时数据：SQLite 主库 + WAL（不入 Git）
 ├── backups/              # 备份（不入 Git）
 ├── logs/                 # 运行日志（不入 Git）
-├── deploy/               # 运维脚本（自适应运行模式，详见「服务管理脚本」一节）
-│   ├── start.sh          # 启动服务
-│   ├── stop.sh           # 停止服务
+├── scripts/              # 日常手动控制：start / restart / stop（systemd 语义）
+│   ├── start.sh          # 启动并恢复开机自启
 │   ├── restart.sh        # 重启（--build 先构建前端）
-│   ├── status.sh         # 查看运行状态
-│   ├── log.sh [N]        # 查看日志
+│   └── stop.sh           # 永久关闭（stop + disable，重启机器也不自启）
+├── deploy/               # 安装与运维（详见「服务管理脚本」一节）
+│   ├── install-service.sh # 渲染并安装 systemd 单元
+│   ├── status.sh         # 查看运行状态 + 健康检查
+│   ├── log.sh [N]        # 查看日志（logs/app.log）
 │   ├── service.sh        # 内部公共库（被上面脚本 source，不直接执行）
 │   ├── deploy.sh         # 服务器一键发版（拉代码 → 装依赖 → 构建 → 重启）
-│   └── studylog.service  # systemd 单元文件
+│   ├── start.sh / stop.sh / restart.sh  # 兼容旧入口，转发到 scripts/
+│   └── studylog.service  # systemd 单元模板（占位符由 install-service.sh 渲染）
 └── .env.example
 ```
 
@@ -75,14 +78,14 @@ npm run dev
 npm --prefix web run dev
 ```
 
-也可以用 [deploy/](deploy/) 下的脚本管理本地服务（开发机为 nohup 模式，日志写 `logs/app.log`）：
+也可以用 [scripts/](scripts/) 下的脚本以 systemd 方式常驻（首次会自动安装单元并设为开机自启）：
 
 ```bash
-deploy/start.sh            # 启动（已在运行则跳过，防重复启动）
-deploy/stop.sh             # 停止（PID 文件 + 按项目目录兜底扫描残留进程）
-deploy/restart.sh --build  # 重启（改了前端代码后必须加 --build 重新构建）
-deploy/status.sh           # 状态 + 健康检查
-deploy/log.sh 50           # 最近 50 行日志
+scripts/start.sh            # 启动 + 设为开机自启（单元缺失时自动安装）
+scripts/restart.sh --build  # 重启（改了前端代码后必须加 --build 重新构建）
+scripts/stop.sh             # 永久关闭（同时取消开机自启）
+deploy/status.sh            # 状态 + 开机自启状态 + 健康检查
+deploy/log.sh 50            # 最近 50 行日志（logs/app.log）
 ```
 
 ## 生产构建与运行
@@ -159,30 +162,42 @@ bash deploy/deploy.sh
 - 代码放在 `/root` 下可行的前提是"以 root 运行"：`/root` 权限为 `0700`，一旦给单元加上 `User=` 降权，普通用户无法穿越该目录，此时应把代码移到 `/opt`，并且不要启用 `ProtectHome=true`。
 - 应用无鉴权且以 root 运行，公网直开端口意味着任何能访问该端口的人都能读写数据；建议用安全组限制来源 IP，或在前面加 Nginx 做 Basic Auth / HTTPS。
 
-## 服务管理脚本（deploy/）
+## 服务管理脚本（scripts/ + deploy/）
 
-所有启停操作统一走 [deploy/](deploy/) 目录的脚本，**自动适配两种运行模式**，无需手动区分环境：
-
-| 模式 | 判定 | 启停方式 | 日志位置 |
-| --- | --- | --- | --- |
-| systemd（生产） | 单元 `studylog.service` 已安装 | `systemctl start/stop/restart` | `journalctl -u studylog` |
-| nohup（开发机） | 无 systemd 单元 | PID 文件（`data/studylog.pid`）驱动 | `logs/app.log` |
+服务由 **systemd 单元 `studylog.service`** 托管：开机自启、崩溃自动拉起（`Restart=always`）。日常手动操作统一走 [scripts/](scripts/) 下的三个脚本：
 
 ```bash
-deploy/start.sh             # 启动服务 + 健康检查（已在运行则直接返回，防重复启动）
-deploy/stop.sh              # 停止服务（优雅退出 15s，超时 SIGKILL；再按项目目录兜底清理残留进程）
-deploy/restart.sh           # 重启服务（不构建前端，适用于只改了服务端代码）
-deploy/restart.sh --build   # 先构建前端再重启（改了 web/ 下页面代码后必须加）
-deploy/status.sh            # 运行状态、PID、内存与健康检查
-deploy/log.sh [N]           # 最近 N 行日志（默认 50）
+scripts/start.sh            # 启动并恢复开机自启（单元缺失时自动调用 install-service.sh）
+scripts/restart.sh          # 重启（只改了服务端代码）
+scripts/restart.sh --build  # 先构建前端再重启（改了 web/ 下代码后必须加）
+scripts/stop.sh             # 永久关闭：stop + disable，重启机器也不会自启
 ```
 
-健壮性设计：
+| 脚本 | systemctl 动作 | 机器重启后 |
+| --- | --- | --- |
+| `scripts/start.sh` | `enable` + `start` | 自启 |
+| `scripts/restart.sh` | `enable` + `restart` | 自启 |
+| `scripts/stop.sh` | `stop` + `disable` | **不自启（永久关闭）** |
 
-- **防重复启动**：`start.sh` 先做健康检查，服务已在响应就直接返回；发现僵死进程会报错提示先清理，避免两个实例抢端口。
-- **进程识别精确**：nohup 模式下按「命令行含服务入口 + 进程工作目录 = 项目根」识别本服务的进程，不会误杀其它 Node 项目；PID 文件丢失（如曾手动启动）也能兜底停掉。
-- **单元名可覆盖**：若服务器上的 systemd 单元不叫 `studylog`，用 `STUDYLOG_SERVICE=单元名 deploy/start.sh` 指定。
-- 服务器上若尚未安装单元，执行一次性初始化（见上节第 4 步）后，脚本会自动切换到 systemctl 管理。
+只想临时停一下、重启后仍要自启，直接用 `systemctl stop studylog`。
+
+其它运维命令：
+
+```bash
+deploy/install-service.sh   # 安装/刷新单元（代码目录或 node 路径变化后执行）
+deploy/status.sh            # 单元状态 + 开机自启状态 + 健康检查
+deploy/log.sh [N]           # 最近 N 行应用日志（默认 50，统一写 logs/app.log）
+journalctl -u studylog -f   # systemd 侧启停记录
+```
+
+设计要点：
+
+- **单元模板与机器解耦**：`deploy/studylog.service` 用 `@ROOT@` / `@NODE@` 占位符，由 `deploy/install-service.sh` 渲染后写入 `/etc/systemd/system/`，开发机与生产机共用一份模板。
+- **stop 的两种语义分开**：`scripts/stop.sh` 是「永久关闭」（同时 `disable`）；临时停止用 `systemctl stop`。
+- **旧入口兼容**：`deploy/start.sh` / `deploy/stop.sh` / `deploy/restart.sh` 仍可用，内部转发到 `scripts/` 同名脚本。
+- **不要用 nohup 起服务**：nohup 进程仍属于启动它的会话进程树，`nohup` 只挡 `SIGHUP`，会话或宿主进程被清理时收到 `SIGTERM` 就会直接退出且无人拉起（2026-11-03 曾因此停服）。systemd 托管后不受影响。
+- **无 systemd 的极简环境**：`deploy/service.sh` 仍保留 nohup 兜底实现（PID 文件 + `data/studylog.pid`），此时 start/stop 会走该分支。
+- **单元名可覆盖**：若单元不叫 `studylog`，用 `STUDYLOG_SERVICE=单元名 ...` 指定。
 
 ## 常用命令
 
@@ -196,7 +211,7 @@ deploy/log.sh [N]           # 最近 N 行日志（默认 50）
 | `npm run seed:demo` | 灌入演示数据（10 次考试；会先清空现有考试数据，勿在生产执行） |
 | `npm test` | 运行 Vitest 单元测试 |
 | `bash deploy/deploy.sh` | 服务器上一键发版 |
-| `deploy/start.sh` / `stop.sh` / `restart.sh` | 启动 / 停止 / 重启服务（详见「服务管理脚本」一节） |
+| `scripts/start.sh` / `restart.sh` / `stop.sh` | 启动 / 重启 / 永久关闭服务（详见「服务管理脚本」一节） |
 
 ## 接口约定
 

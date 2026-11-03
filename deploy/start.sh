@@ -1,35 +1,11 @@
 #!/usr/bin/env bash
 #
-# 启动学习记录服务（自适应运行模式）
-#   - systemd 单元已安装（生产）→ systemctl start
-#   - 其他环境（开发机 nohup）   → PID 文件驱动后台启动
-# 已在运行或发现僵死进程时会拒绝重复启动。
+# 【已迁移】启动服务统一入口改为 scripts/start.sh，此脚本仅做转发，保留以兼容旧用法。
+# 行为：安装/刷新 systemd 单元（如缺失）→ systemctl enable → start → 健康检查。
 #
-# 用法：deploy/start.sh
+# 用法：deploy/start.sh    （等价于 scripts/start.sh）
 
 set -uo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/service.sh"
-
-if health_ok; then
-  echo "服务已在运行（$HEALTH_URL 健康检查通过），无需启动"
-  exit 0
-fi
-
-if unit_exists; then
-  echo "==> systemctl start $SERVICE"
-  systemctl start "$SERVICE" || exit 1
-else
-  nohup_start || exit 1
-  exit 0
-fi
-
-# systemd 启动后的健康检查
-for _ in $(seq 1 20); do
-  if health_ok; then
-    echo "健康检查通过：$HEALTH_URL"
-    exit 0
-  fi
-  sleep 1
-done
-echo "警告：已发出启动命令，但 $HEALTH_URL 未就绪，请用 deploy/log.sh 排查" >&2
-exit 1
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo "提示：deploy/start.sh 已迁移，统一使用 scripts/start.sh（本次自动转发）" >&2
+exec "$ROOT/scripts/start.sh" "$@"

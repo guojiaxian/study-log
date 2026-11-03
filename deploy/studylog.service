@@ -1,20 +1,28 @@
 [Unit]
 Description=StudyLog 初中生学习成绩记录系统
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+# 本文件是模板：路径占位符由 deploy/install-service.sh 按当前机器实际路径替换后安装，
+# 因此同一份模板在开发机与生产机通用。
+WorkingDirectory=@ROOT@
 # 未指定 User= 时以 root 运行，因此代码可以放在仅 root 可访问的 /root 下；
 # 若将来改为降权用户运行，需把目录移到 /opt 等 0755 路径，且不要启用 ProtectHome=true。
-WorkingDirectory=/root/studylog
-EnvironmentFile=/root/studylog/.env
-# 内存硬约束：异常膨胀由 cgroup 限制而非拖垮整机（对应开发手册 7.5）
-ExecStart=/usr/bin/node --max-old-space-size=384 --disable-warning=ExperimentalWarning server/src/server.js
+#
+# .env 不通过 EnvironmentFile 注入：应用启动时 server/src/lib/loadEnv.js 会以
+# WorkingDirectory 为基准读取 .env，避免密钥含 $ / 引号时 EnvironmentFile 解析失败。
+Environment=NODE_ENV=production
+ExecStart=@NODE@ --max-old-space-size=384 --disable-warning=ExperimentalWarning server/src/server.js
+# 崩溃自动拉起；systemctl stop 属于主动停止，不会被 Restart 复活
 Restart=always
 RestartSec=3
+# 内存硬约束：异常膨胀由 cgroup 限制而非拖垮整机（对应开发手册 7.5）
 MemoryMax=450M
-StandardOutput=append:/root/studylog/logs/stdout.log
-StandardError=append:/root/studylog/logs/stderr.log
+# 日志与 nohup 模式保持同一位置，deploy/log.sh 两种模式都可直接 tail
+StandardOutput=append:@ROOT@/logs/app.log
+StandardError=append:@ROOT@/logs/stderr.log
 
 [Install]
 WantedBy=multi-user.target
